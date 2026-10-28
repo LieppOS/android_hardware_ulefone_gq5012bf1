@@ -15,10 +15,14 @@
 int main(int argc, char** argv) {
     (void)argc;
     android::base::InitLogging(argv, android::base::LogdLogger(android::base::SYSTEM));
+    if (!lieppos::vibrator::deploymentAllowed()) {
+        LOG(ERROR) << "Deployment CLOSED: target build, kernel expiry/lifetime and hardware validation required";
+        return EXIT_FAILURE;  // Before device discovery, writes or registration.
+    }
     int error = 0;
-    auto device = lieppos::vibrator::discoverRegulatorLed("/sys/class/leds", &error);
-    if (!device) {
-        LOG(ERROR) << "Cannot identify exactly one regulator_vibrator LED: " << std::strerror(error);
+    auto device = lieppos::vibrator::discoverTimedRegulatorLed("/sys/class/leds", &error);
+    if (!device || !device->usesKernelTimerProtocol()) {
+        LOG(ERROR) << "Cannot identify timed regulator_vibrator LED: " << std::strerror(error);
         return EXIT_FAILURE;
     }
     auto controller = std::make_shared<lieppos::vibrator::Controller>(std::move(device), [](int err) {

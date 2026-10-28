@@ -3,7 +3,7 @@
 #pragma once
 
 #include <aidl/android/hardware/vibrator/BnVibrator.h>
-#include <mtk_vibrator/Controller.h>
+#include "VibratorPolicy.h"
 
 namespace aidl::android::hardware::vibrator {
 // Implements the genuine frozen V2 interface; no local AIDL redefinition.
@@ -35,6 +35,6 @@ class Vibrator final : public BnVibrator {
     ndk::ScopedAStatus getSupportedBraking(std::vector<Braking>*) override;
     ndk::ScopedAStatus composePwle(const std::vector<PrimitivePwle>&, const std::shared_ptr<IVibratorCallback>&) override;
   private:
-    std::shared_ptr<::lieppos::vibrator::Controller> controller_;
+    ::lieppos::vibrator::VibratorPolicy policy_;
 };
 }  // namespace aidl::android::hardware::vibrator

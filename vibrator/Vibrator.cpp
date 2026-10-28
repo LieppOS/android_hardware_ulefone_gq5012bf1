@@ -2,36 +2,37 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "Vibrator.h"
 
-#include <cerrno>
-#include <cmath>
 #include <utility>
 
 namespace aidl::android::hardware::vibrator {
 namespace {
-ndk::ScopedAStatus unsupported() {
-    return ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
+using Policy = ::lieppos::vibrator::VibratorPolicy;
+ndk::ScopedAStatus status(Policy::Result result) {
+    switch (result.kind) {
+        case Policy::Kind::Ok: return ndk::ScopedAStatus::ok();
+        case Policy::Kind::IllegalArgument:
+            return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
+        case Policy::Kind::Unsupported:
+            return ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
+        case Policy::Kind::IoError:
+            return ndk::ScopedAStatus::fromServiceSpecificError(result.error);
+    }
+    return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_STATE);
 }
-ndk::ScopedAStatus status(int error) {
-    if (!error) return ndk::ScopedAStatus::ok();
-    // Client validation is performed before I/O. Preserve backend errno even
-    // when the kernel rejects a write with EINVAL.
-    return ndk::ScopedAStatus::fromServiceSpecificError(error);
-}
+ndk::ScopedAStatus unsupported() { return status(Policy::unsupported()); }
 }  // namespace
 
 Vibrator::Vibrator(std::shared_ptr<::lieppos::vibrator::Controller> controller)
-    : controller_(std::move(controller)) {}
+    : policy_(std::move(controller)) {}
 
 ndk::ScopedAStatus Vibrator::getCapabilities(int32_t* result) {
     if (!result) return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
-    *result = 0;  // Timed on/off only. No unverified callbacks/amplitude/effects.
+    *result = Policy::capabilities();  // No unverified callbacks/amplitude/effects.
     return ndk::ScopedAStatus::ok();
 }
-ndk::ScopedAStatus Vibrator::off() { return status(controller_->off()); }
+ndk::ScopedAStatus Vibrator::off() { return status(policy_.off()); }
 ndk::ScopedAStatus Vibrator::on(int32_t timeoutMs, const std::shared_ptr<IVibratorCallback>& callback) {
-    if (timeoutMs <= 0) return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
-    if (callback) return unsupported();
-    return status(controller_->on(timeoutMs));
+    return status(policy_.on(timeoutMs, static_cast<bool>(callback)));
 }
 ndk::ScopedAStatus Vibrator::getSupportedEffects(std::vector<Effect>* result) {
     if (!result) return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
@@ -39,9 +40,7 @@ ndk::ScopedAStatus Vibrator::getSupportedEffects(std::vector<Effect>* result) {
     return ndk::ScopedAStatus::ok();
 }
 ndk::ScopedAStatus Vibrator::setAmplitude(float amplitude) {
-    if (!std::isfinite(amplitude) || amplitude <= 0.0f || amplitude > 1.0f)
-        return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
-    return unsupported();
+    return status(Policy::amplitude(amplitude));
 }
 ndk::ScopedAStatus Vibrator::perform(Effect, EffectStrength, const std::shared_ptr<IVibratorCallback>&, int32_t*) { return unsupported(); }
 ndk::ScopedAStatus Vibrator::setExternalControl(bool) { return unsupported(); }
