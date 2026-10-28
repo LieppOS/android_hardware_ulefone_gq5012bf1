@@ -20,7 +20,7 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;  // Before device discovery, writes or registration.
     }
     int error = 0;
-    auto device = lieppos::vibrator::discoverTimedRegulatorLed("/sys/class/leds", &error);
+    auto device = lieppos::vibrator::discoverDriverTimedRegulatorLed("/sys/class/leds", &error);
     if (!device || !device->usesKernelTimerProtocol()) {
         LOG(ERROR) << "Cannot identify timed regulator_vibrator LED: " << std::strerror(error);
         return EXIT_FAILURE;

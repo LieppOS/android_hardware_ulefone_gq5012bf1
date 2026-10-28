@@ -20,7 +20,7 @@ class VibratorPolicy final {
     static Result unsupported() { return {Kind::Unsupported}; }
     static Result illegalArgument() { return {Kind::IllegalArgument}; }
     Result on(int32_t durationMs, bool hasCallback) {
-        if (durationMs <= 0) return illegalArgument();
+        if (durationMs <= 0 || (controller_ && durationMs > controller_->maxDurationMs())) return illegalArgument();
         if (hasCallback) return unsupported();  // No callback retained or invoked.
         return io(controller_ ? controller_->on(durationMs) : ENODEV);
     }

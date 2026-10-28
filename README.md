@@ -1,144 +1,131 @@
-# GQ5012BF1 vibrator HAL — C51B, deployment CLOSED
+# GQ5012BF1 vibrator HAL — C51C, deployment CLOSED
 
-Owner: `LieppOS/android_hardware_ulefone_gq5012bf1`. Continues C51
-`92f95b00c3d8a019b23f91279df1cbb39d242164`. Independently authored Apache-2.0
-source (`LICENSE`); no proprietary userspace dependency or copied generated
-Binder class. One source service, using the MediaTek native library, not a second
-copy of its hardware backend.
+Owner: `LieppOS/android_hardware_ulefone_gq5012bf1`. Continues C51B
+`88aac5431cdb2e2599411658d6e71dc233ab2bb6`. Apache-2.0 independent source;
+no copied/generated Binder class or proprietary userspace backend.
 
-## Exact source/build contract
+## Exact current contract
 
 | Item | Value |
 |---|---|
 | Soong module | `android.hardware.vibrator-service.gq5012bf1` |
-| Static dependency | `libmtk_regulator_vibrator` in `hardware/mediatek/mt6878` |
+| Backend | `libmtk_regulator_vibrator`, canonical MediaTek hardware owner |
 | Shared dependencies | `android.hardware.vibrator-V2-ndk`, `libbinder_ndk`, `libbase` |
-| Interface | frozen `android.hardware.vibrator.IVibrator` V2 |
-| Instance | `android.hardware.vibrator.IVibrator/default` |
+| Interface/instance | frozen V2 `android.hardware.vibrator.IVibrator/default` |
 | Executable | `/vendor/bin/hw/android.hardware.vibrator-service.gq5012bf1` |
 | Init name | `vendor.vibrator-default`, system UID/group, class hal |
-| Init gate | `disabled` + `oneshot`; not lazy registration |
-| Code gate | `deploymentAllowed()` is unconditionally false, before discovery, I/O or registration |
-| Fragment | module-owned `vibrator/vibrator-gq5012bf1.xml`, V2 `IVibrator/default` only |
-| SELinux executable/domain | `hal_vibrator_default_exec` / `hal_vibrator_default` |
+| Source gates | init disabled+oneshot AND deploymentAllowed() unconditionally false before vibrator I/O/registration |
+| Fragment | module-owned vibrator-gq5012bf1.xml; IVibrator V2 only |
+| Executable type/domain | `hal_vibrator_default_exec` / `hal_vibrator_default` |
+| Production backend | `discoverDriverTimedRegulatorLed`, driver timeout ABI1; no legacy/one-shot fallback |
 
-Disabled alone would not stop explicit/interface starts. The code gate also
-refuses those starts and prevents a crash-restart loop. There is no property or
-command-line bypass. **Do not select/install the module or fragment while closed**:
-framework clients may wait for a declared service which cannot register.
+C51C kernel implementation `af3ecd85d28614c2ad25c6448cd68634d62c6a33` adds stable
+LED attributes `timeout_abi=1`, `max_duration_ms=5000`, atomic `duration_ms` and
+`last_error`. A duration request is kernel-timed independently of HAL process
+lifetime. Maximum is queried, not duplicated as a board guess. Oversized values
+are illegal arguments before I/O. The 5000ms ceiling is provisional software
+protection policy, not a proven actuator/thermal rating.
 
-All 24 V2 methods are implemented against genuine generated types. Capabilities
-are zero, effects empty; callbacks are rejected and never retained/invoked;
-amplitude/effect/composition/always-on/frequency features remain explicitly
-unsupported. Nonpositive duration and invalid amplitude are illegal arguments;
-backend errno maps to a service-specific Binder exception. Host-tested production
-request logic is in `VibratorPolicy.h`; the actual NDK transport is not mocked.
-Startup requires timed-only discovery and accepted initial OFF before normal
-`AServiceManager_addService`, then the main thread joins the Binder pool (max
-additional threads 0). Actual Android registration/IPC is **not runtime-tested**.
+Startup still requires exact-driver discovery and accepted initial OFF before
+ordinary AServiceManager registration. Capabilities remain zero; effects empty;
+unsupported haptics/callbacks return explicit errors and callbacks are not retained.
+The normal main thread joins the Binder pool with zero additional threads.
+Controller serializes all actual requests. Genuine V2 signatures compile against
+real SDK37-generated NDK headers; physical behavior and Binder IPC are not proven.
 
-## Authentic AIDL and build evidence
+The kernel uses a CLOCK_BOOTTIME hrtimer plus mutex-serialized OFF work, drains
+old LED-core work before rearm/suspend, latches/retries faults, and orders producer
+teardown before state release. Persistent PMIC faults, another rail consumer,
+kernel hangs and forced removal cannot be claimed physically safe by software.
+Exact implementation/lifetime limits: MediaTek `vibrator/SAFETY.md` and kernel
+`Documentation/ABI/testing/sysfs-class-led-regulator-vibrator`.
 
-Source authority: `LineageOS/android_hardware_interfaces`, `lineage-24.0`, commit
-`13fc23dae0dcd24fc2411d74f54a407999eaf555`. The interface Android.bp retains frozen
-1/2/3/4 and NDK/vendor availability, SHA-256
-`ce71a302b6d4f65e5b68b31162c0858a5149c92f8ed8aa34fa635f3cf984085a`.
-Frozen V2 IVibrator SHA-256:
-`51161792eba95aee28a92723a1430b235e57e75751c24db04d84f7d83cca318e`;
-actual V2 interface hash `ea8742d6993e1a82917da38b9938e537aa7fcb54`.
-The pinned target VTS source was consulted for cap-gated optional methods and
-unsupported on-callback handling; VTS was **not run**.
+## Exact C54 integration handoff — no changes applied
 
-C52 identifies the existing full platform at `/mnt/SamsungSSD/android/lineage-24.0`;
-canonical `android/` currently contains integration owners, not the full platform.
-Using that platform **read-only**, its real SDK37 aidl generated V2 headers and
-source-defined Clang22 (`clang-r584948`) compiled **5/5 real sources to Android
-arm64 objects**, with Bionic/libc++, vendor/VNDK macros and Werror. This proves
-source signatures compile against the real frozen interface, **not** service
-linking, the Soong vendor graph, VTS, registration or hardware behavior.
+**Keep stock selected and this package/fragment unselected.** Disabled init alone
+cannot prevent explicit/interface starts; the code gate also refuses registration.
+Do not flip it based only on host tests or object compilation.
 
-Reproduce from `tools/ulefone/gq5012bf1/hal-audit`:
-
-```sh
-PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 -B \
-  tests/android_adapter_probe.py /mnt/SamsungSSD/android/lineage-24.0
-LIEPPOS_C51_SOURCE_TESTS=1 LIEPPOS_REAL_SOURCE_TESTS=1 \
-  PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s tests -v
-```
-
-Recorded: **94/94 Python checks**; original backend **12/12**, new lifecycle/policy
-**17/17**, both normal and ASan/UBSan; new suite also **17/17 TSan**. Host tests are
-not Binder IPC or hardware proof. Temporary outputs are cleaned from the existing
-ignored tooling `.tmp/`; generated platform headers are not committed.
-
-Actual targeted request (isolated owned temporary OUT_DIR/GOCACHE/TMPDIR,
-GOMAXPROCS=2, TARGET_PRODUCT=lineage_gq5012bf1, TARGET_RELEASE=cp2a,
-TARGET_BUILD_VARIANT=userdebug):
-
-```sh
-bash build/soong/soong_ui.bash --make-mode -j2 android.hardware.vibrator-service.gq5012bf1
-```
-
-It reached product evaluation/Soong bootstrap and exited **1**:
-`failed to load @config//main.star: open main.star: no such file or directory`.
-The two hardware owner paths are also absent from that platform source tree.
-**DeepSeek C53 owns checkout repair and single-root source wiring**. No repair,
-repo sync, duplicate checkout, external source/output modification or shared
-build-output reuse was performed by C51B.
-
-## Exact device/vendor handoff for DeepSeek — NOT applied
-
-**Now: keep stock selected and C51B unselected. Do not open either gate.**
-
-After build, kernel/lifetime, policy and hardware gates are separately satisfied:
-
-1. Wire the exact canonical hardware source commits into the single approved
-   build root. Do not build an old donor copy. Add
-   `PRODUCT_SOONG_NAMESPACES += hardware/ulefone/gq5012bf1` (its namespace imports
-   MediaTek). Only then select
-   `PRODUCT_PACKAGES += android.hardware.vibrator-service.gq5012bf1`.
-2. C52 reports three stock installation entries: binary at proprietary-files line
-   348, rc at 734, fragment at 980. Mark exactly these **EXTRACT_ONLY** in the
-   extraction manifest and regenerate vendor configuration at product-definition
-   time: `vendor/bin/hw/android.hardware.vibrator-service.mediatek`,
-   `vendor/etc/init/vibrator-mtk-default.rc`,
-   `vendor/etc/vintf/manifest/vibrator-mtk-default.xml`. C52 proved BoardConfig
-   cannot mutate the late readonly PRODUCT_PACKAGES/COPY_FILES lists. Do not use
-   a misleading late filter/flag or remove unrelated libraries by substring.
-3. **Additional compatibility gate:** C52 reports the real stock fragment declares
-   BOTH `IVibrator/default` and `IVibratorManager/default` V2. This source implements
-   ONLY IVibrator. Do not silently drop Manager or invent its actuator IDs. Owner
-   must obtain/validate the Manager contract, implement it in the proper owner or
-   establish an explicitly compatible fallback/selection before replacing the
-   whole stock fragment. Do not retain a second stock IVibrator server.
-4. Install the new module-owned rc/fragment exactly once; do not also copy it or
-   append it to DEVICE_MANIFEST_FILE. Validate the actual selected matrices/SKU/
-   APEX merge with target tools. C52's stock-only compatibility result does not
+1. Review/install the exact compatible C51C kernel module under separate owner
+   approval; do not assume the running kernel has timeout ABI1. Existing kernel
+   config is byte-identical C50: REGULATOR_VIBRATOR=m, ONESHOT unset, CFI and
+   MODVERSIONS enabled. Do not apply the superseded generic-trigger config patch.
+2. Establish the safe physical duration policy, dedicated controllable supply,
+   fault/retry/suspend/remove behavior and real process-death tests separately.
+   Returning a remove error does not veto Linux unbind; persistent failed OFF is
+   a physical deployment blocker, not a successful stop.
+3. Obtain sanitized actual LED/real-device path, labels and ownership. The kernel
+   creates static attribute groups at LED registration, so there is no per-shot
+   trigger-attribute recreation. Give system UID/hal_vibrator_default only
+   directory/driver-link and max_brightness/timeout_abi/max_duration_ms/duration_ms/
+   last_error reads, plus **duration_ms write only**. No trigger/invert/delay/shot
+   or brightness write is required by production. No guessed genfs/ueventd rule,
+   broad sysfs grant, root UID or DAC_OVERRIDE shortcut is provided.
+4. The source executable mapping remains in `vibrator/sepolicy/file_contexts`;
+   owner may include `hardware/ulefone/gq5012bf1/vibrator/sepolicy` in
+   BOARD_VENDOR_SEPOLICY_DIRS after policy review. Compile enforcing policy and
+   actual access against the real target; existing stock policy checks do not
    validate this replacement.
-5. Include `hardware/ulefone/gq5012bf1/vibrator/sepolicy` in
-   `BOARD_VENDOR_SEPOLICY_DIRS`; it contains only the executable file-context
-   mapping. The target default vibrator domain is existing platform policy
-   (C51 reference: system_sepolicy commit d61fd80832f558d52de026097d30d695634e8b0f).
-   **No guessed node genfs/ueventd policy is supplied.** Obtain sanitized actual
-   LED/real-device path, labels and ownership. Grant only this service's domain/
-   system UID directory/link reads, max_brightness read, trigger read/write,
-   brightness OFF write, invert/delay_on/delay_off/shot writes. No wildcard
-   world-writable LED permissions, root UID, permissive domain or broad sysfs allow.
-6. Kernel owner: review `hardware/mediatek/mt6878/vibrator/SAFETY.md` and unapplied
-   `oneshot-config-proposal.patch`: require verified ONESHOT in the effective
-   running kernel, and fix/review producer/workqueue/regulator cleanup and suspend/
-   unbind races. A kernel off-attempt is not a guarantee against regulator failure.
-7. Build only the selected module, link its real vendor dependencies, compile
-   policy and test registration/IPC/VINTF. Only then arrange separately authorized
-   real hardware/process-death tests on an identified safe image set. After all
-   acceptance gates, review the explicit source code/init gate change. There is
-   deliberately no one-variable production opt-in now.
+5. C52 reports the stock fragment declares BOTH IVibrator/default and
+   IVibratorManager/default V2. This source implements ONLY IVibrator. Resolve
+   Manager/actuator-ID/compatible-selection requirements before replacing the
+   stock fragment. Do not invent IDs or leave two IVibrator servers installed.
+6. Only after those gates: wire exact canonical source commits into the single
+   approved Android build root, add PRODUCT_SOONG_NAMESPACES +=
+   hardware/ulefone/gq5012bf1 (imports MediaTek) and PRODUCT_PACKAGES +=
+   android.hardware.vibrator-service.gq5012bf1. Do not build a stale donor copy.
+7. Exclude exactly the old stock binary, rc and fragment by marking their
+   extraction entries EXTRACT_ONLY and regenerating vendor configuration:
+   vendor/bin/hw/android.hardware.vibrator-service.mediatek;
+   vendor/etc/init/vibrator-mtk-default.rc;
+   vendor/etc/vintf/manifest/vibrator-mtk-default.xml. C52 proved late BoardConfig
+   cannot mutate finalized PRODUCT_PACKAGES/COPY_FILES. No substring-wide removal.
+8. Install the module-owned rc/fragment once, not via duplicate copy/manifest
+   inclusion. Check actual assembled VINTF/SKU/APEX metadata, registration and
+   IPC. Review an explicit code/init gate change only after all acceptance gates.
 
-Source availability, object compilation, full linking, compatibility, kernel
-process-death behavior and hardware validation are separate properties. No claim
-that the whole vibrator/kernel/PMIC/firmware stack is proven open or safe.
+## Tests and build boundaries
 
-Research-ready C51B findings remain at
-`tools/ulefone/gq5012bf1/hal-audit/docs/RESEARCH-HANDOFF.md`, **not yet merged into
-the C53-owned research worktree**. C52 reports the earlier C51 summary was merged;
-that does not merge or validate these new C51B changes. No push or phone operation.
+HAL: **96/96 Python**, **34/34 native and ASan/UBSan**, **22/22 TSan**. Original
+C51/C51B cases retained, five focused driver-ABI cases added. Host fake attributes
+exercise actual request policy/controller, not counterfeit Binder classes.
+Kernel shared policy: **12/12** each mode plus four static source-order checks;
+these are not Linux timer/regulator runtime tests.
+
+C51C real targeted kernel-module build/modpost/link PASS with Android Clang17
+r487747c and unchanged C50 config. Scoped offline ABI checks: 32 import CRCs
+match core, 13 common CRCs/six common callback tags match, no exports, same
+vermagic. New .ko deliberately differs; no Image/full cohort or phone build.
+
+C53 corrected the earlier Soong diagnosis: absolute OUT_DIR caused the
+main.star error; **OUT_DIR=out works**, not a missing source to fabricate.
+DeepSeek C54 is concurrently using the platform/vendor/policy environment, so
+C51C does NOT run a concurrent shared-output Soong build or modify that tree.
+Owner's targeted command, once source is wired and shared output is available:
+
+```sh
+export OUT_DIR=out
+source build/envsetup.sh
+lunch lineage_gq5012bf1-cp2a-userdebug
+m -j2 android.hardware.vibrator-service.gq5012bf1
+```
+
+Independent read-only platform signature/object probe, from hal-audit:
+
+```sh
+PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 -B tests/android_adapter_probe.py \
+  /mnt/SamsungSSD/android/lineage-24.0
+```
+
+Recorded C51C result: **6/6 ELF64 AArch64 objects PASS**, not linked or Soong-built.
+This uses real SDK37 aidl, frozen V2 SHA256
+`51161792eba95aee28a92723a1430b235e57e75751c24db04d84f7d83cca318e`, hash
+`ea8742d6993e1a82917da38b9938e537aa7fcb54`, and real Android Clang/Bionic/vendor
+headers. Objects are not a linked Soong service or runtime proof. All temporary
+outputs are removed. Source contracts, complete kernel lifetime evidence and
+current commit receipts are in the existing **unmerged C51C** research handoff:
+`tools/ulefone/gq5012bf1/hal-audit/docs/RESEARCH-HANDOFF.md`.
+
+No C54 device/vendor/manifest/research edits, Android activation, security
+weakening, push or phone operation. The entire hardware stack is not certified
+open or physically safe by this source work.

@@ -80,6 +80,32 @@ struct FakeAttributes final : LedAttributes {
 std::unique_ptr<Switch> timed(const std::shared_ptr<Attributes>& a, int* error) {
     return makeOneShotSwitch(std::make_unique<FakeAttributes>(a), error);
 }
+struct DriverAttributes {
+    std::mutex mutex;
+    std::map<std::string, std::string> values{{"timeout_abi", "1\n"}, {"max_duration_ms", "5000\n"}, {"duration_ms", "0\n"}};
+    std::vector<std::pair<std::string, std::string>> writes;
+    int failure = 0;
+};
+struct FakeDriverAttributes final : LedAttributes {
+    explicit FakeDriverAttributes(std::shared_ptr<DriverAttributes> a) : state(std::move(a)) {}
+    int read(const char* name, std::string* value) override {
+        std::lock_guard lock(state->mutex);
+        auto it = state->values.find(name);
+        if (it == state->values.end()) return ENOENT;
+        *value = it->second; return 0;
+    }
+    int write(const char* name, const std::string& value) override {
+        std::lock_guard lock(state->mutex);
+        if (state->failure) return state->failure;
+        CHECK(std::string(name) == "duration_ms");
+        state->writes.emplace_back(name, value); state->values[name] = value;
+        return 0;
+    }
+    std::shared_ptr<DriverAttributes> state;
+};
+std::unique_ptr<Switch> driverTimed(const std::shared_ptr<DriverAttributes>& a, int* error) {
+    return makeDriverTimedSwitch(std::make_unique<FakeDriverAttributes>(a), error);
+}
 void put(const fs::path& p, const std::string& value) { std::ofstream(p) << value; }
 std::string get(const fs::path& p) {
     std::ifstream in(p); return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
@@ -224,6 +250,55 @@ int main(int argc, char** argv) {
             // A plain file is not a kernel trigger; no fabricated [oneshot] acknowledgment.
             CHECK(d->start(1) == EOPNOTSUPP); CHECK(get(entry / "brightness") == "0\n");
         });
+        test("driver ABI uses one atomic duration transaction without trigger writes", [&] {
+            auto a = std::make_shared<DriverAttributes>(); int error; auto d = driverTimed(a, &error);
+            CHECK(d && error == 0 && d->usesKernelTimerProtocol() && d->maxDurationMs() == 5000);
+            CHECK(d->set(true) == EOPNOTSUPP && d->start(0) == EINVAL);
+            CHECK(d->start(5000) == 0 && d->set(false) == 0);
+            const std::vector<std::pair<std::string, std::string>> expected{{"duration_ms", "5000\n"}, {"duration_ms", "0\n"}};
+            CHECK(a->writes == expected);
+        });
+        test("driver metadata malformed unknown missing never falls back", [&] {
+            int error;
+            auto a = std::make_shared<DriverAttributes>(); a->values["timeout_abi"] = "2\n";
+            CHECK(!driverTimed(a, &error) && error == EOPNOTSUPP && a->writes.empty());
+            for (const auto& value : {"0", "-1", "2147483648", "bad"}) {
+                a = std::make_shared<DriverAttributes>(); a->values["max_duration_ms"] = value;
+                CHECK(!driverTimed(a, &error) && error == EINVAL);
+            }
+            a = std::make_shared<DriverAttributes>(); a->values.erase("duration_ms");
+            CHECK(!driverTimed(a, &error) && error == ENOENT);
+        });
+        test("real exported maximum is validated before native and policy I/O", [&] {
+            auto a = std::make_shared<DriverAttributes>(); int error;
+            auto c = std::make_shared<Controller>(driverTimed(a, &error)); CHECK(error == 0);
+            VibratorPolicy p(c);
+            CHECK(c->maxDurationMs() == 5000 && c->on(5001) == EINVAL);
+            CHECK(p.on(5001, false).kind == Kind::IllegalArgument);
+            CHECK(a->writes.empty()); CHECK(p.on(5000, false).kind == Kind::Ok); CHECK(p.off().kind == Kind::Ok);
+        });
+        test("driver request hardware error is never successful activation", [&] {
+            auto a = std::make_shared<DriverAttributes>(); int error;
+            auto c = std::make_shared<Controller>(driverTimed(a, &error)); CHECK(error == 0);
+            VibratorPolicy p(c);
+            { std::lock_guard lock(a->mutex); a->failure = EACCES; }
+            auto result = p.on(5, false); CHECK(result.kind == Kind::IoError && result.error == EACCES);
+            { std::lock_guard lock(a->mutex); a->failure = 0; }
+            CHECK(p.on(5, false).kind == Kind::IoError); CHECK(p.off().kind == Kind::Ok);
+            CHECK(p.on(5, false).kind == Kind::Ok);
+        });
+        test("driver discovery requires stable ABI and refuses attribute symlinks", [&] {
+            const auto root = base / "driver-discovery"; const auto entry = led(root); int error;
+            put(entry / "trigger", "[none] oneshot\n");
+            CHECK(!discoverDriverTimedRegulatorLed(root.string(), &error) && error == ENOENT);
+            put(entry / "timeout_abi", "1\n"); put(entry / "max_duration_ms", "5000\n");
+            fs::create_symlink("brightness", entry / "duration_ms");
+            CHECK(!discoverDriverTimedRegulatorLed(root.string(), &error) && error == ELOOP);
+            fs::remove(entry / "duration_ms"); put(entry / "duration_ms", "0\n");
+            auto d = discoverDriverTimedRegulatorLed(root.string(), &error); CHECK(d && !error);
+            CHECK(d->start(20) == 0 && get(entry / "duration_ms") == "20\n");
+            CHECK(get(entry / "trigger") == "[none] oneshot\n");
+        });
         test("SIGTERM SIGKILL crash show legacy limit; restart initial off repairs", [&] {
             for (int sig : {SIGTERM, SIGKILL, SIGABRT}) {
                 const auto root = base / ("kill-" + std::to_string(sig)); const auto entry = led(root);
@@ -248,6 +323,6 @@ int main(int argc, char** argv) {
             }
         });
     } catch (const std::exception& e) { std::cerr << "FAIL after " << passed << ": " << e.what() << '\n'; return 1; }
-    std::cout << "TOTAL " << passed << "/17\n";
-    return passed == 17 ? 0 : 1;
+    std::cout << "TOTAL " << passed << "/22\n";
+    return passed == 22 ? 0 : 1;
 }
