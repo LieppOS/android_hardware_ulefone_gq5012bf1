@@ -20,9 +20,13 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;  // Before device discovery, writes or registration.
     }
     int error = 0;
-    auto device = lieppos::vibrator::discoverDriverTimedRegulatorLed("/sys/class/leds", &error);
+    // GQ5012BF1 live DT root node /regulator-vibrator, label "vibrator"; the
+    // stock vendor genfscon labels exactly this path sysfs_vibrator. Opening it
+    // directly avoids enumerating every LED (which needs broad LED access).
+    auto device = lieppos::vibrator::openDriverTimedRegulatorLed(
+            "/sys/devices/platform/regulator-vibrator", "vibrator", &error);
     if (!device || !device->usesKernelTimerProtocol()) {
-        LOG(ERROR) << "Cannot identify timed regulator_vibrator LED: " << std::strerror(error);
+        LOG(ERROR) << "Cannot open timed regulator_vibrator LED: " << std::strerror(error);
         return EXIT_FAILURE;
     }
     auto controller = std::make_shared<lieppos::vibrator::Controller>(std::move(device), [](int err) {

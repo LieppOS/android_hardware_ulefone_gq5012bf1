@@ -299,6 +299,55 @@ int main(int argc, char** argv) {
             CHECK(d->start(20) == 0 && get(entry / "duration_ms") == "20\n");
             CHECK(get(entry / "trigger") == "[none] oneshot\n");
         });
+        test("canonical device open checks binding, label, symlink and ABI", [&] {
+            const auto device = base / "devices/platform/regulator-vibrator"; int error;
+            CHECK(!openDriverTimedRegulatorLed(device.string(), "vibrator", &error) && error == ENOENT);
+            fs::create_directories(device / "leds");
+            CHECK(!openDriverTimedRegulatorLed(device.string(), "vibrator", &error) && error == ENODEV);
+            fs::create_symlink("../../../bus/platform/drivers/leds-gpio", device / "driver");
+            CHECK(!openDriverTimedRegulatorLed(device.string(), "vibrator", &error) && error == ENODEV);
+            fs::remove(device / "driver");
+            fs::create_symlink("../../../bus/platform/drivers/regulator_vibrator", device / "driver");
+            for (const char* bad : {"", ".", "..", "../vibrator", "a/b"})
+                CHECK(!openDriverTimedRegulatorLed(device.string(), bad, &error) && error == EINVAL);
+            const auto real = base / "elsewhere-led"; fs::create_directories(real);
+            put(real / "timeout_abi", "1\n"); put(real / "max_duration_ms", "5000\n"); put(real / "duration_ms", "0\n");
+            fs::create_directory_symlink(real, device / "leds/vibrator");
+            CHECK(!openDriverTimedRegulatorLed(device.string(), "vibrator", &error) && error == ENOTDIR);
+            fs::remove(device / "leds/vibrator");
+            const auto entry = device / "leds/vibrator"; fs::create_directory(entry);
+            put(entry / "timeout_abi", "2\n"); put(entry / "max_duration_ms", "5000\n"); put(entry / "duration_ms", "0\n");
+            CHECK(!openDriverTimedRegulatorLed(device.string(), "vibrator", &error) && error == EOPNOTSUPP);
+            put(entry / "timeout_abi", "1\n");
+            auto d = openDriverTimedRegulatorLed(device.string(), "vibrator", &error);
+            CHECK(d && !error && d->usesKernelTimerProtocol() && d->maxDurationMs() == 5000);
+            CHECK(d->start(5001) == EINVAL && get(entry / "duration_ms") == "0\n");
+            CHECK(d->start(40) == 0 && get(entry / "duration_ms") == "40\n");
+            // Regular-file fixture is not truncated like sysfs; compare the parsed value.
+            CHECK(d->set(true) == EOPNOTSUPP && d->set(false) == 0 && std::stoi(get(entry / "duration_ms")) == 0);
+            CHECK(get(real / "duration_ms") == "0\n");  // Symlink target never written.
+        });
+        test("canonical open ignores unreadable sibling LEDs that break enumeration", [&] {
+            const auto device = base / "sibling/devices/platform/regulator-vibrator";
+            const auto entry = device / "leds/vibrator"; fs::create_directories(entry);
+            fs::create_symlink("../../../../bus/platform/drivers/regulator_vibrator", device / "driver");
+            put(entry / "timeout_abi", "1\n"); put(entry / "max_duration_ms", "5000\n"); put(entry / "duration_ms", "0\n");
+            // Enumerating class root: real LED plus an unrelated LED this domain may not read.
+            const auto classRoot = base / "sibling/class-leds"; const auto locked = classRoot / "lcd-backlight";
+            fs::create_directories(locked);
+            fs::create_directory_symlink(fs::absolute(entry), classRoot / "vibrator");
+            fs::create_directories(entry / "device");
+            fs::create_symlink("../../../../../bus/platform/drivers/regulator_vibrator", entry / "device/driver");
+            put(entry / "max_brightness", "1\n");
+            fs::permissions(locked, fs::perms::none);
+            int error = 0;
+            const bool enumerated = static_cast<bool>(discoverDriverTimedRegulatorLed(classRoot.string(), &error));
+            const int enumerationError = error;
+            auto d = openDriverTimedRegulatorLed(device.string(), "vibrator", &error);
+            fs::permissions(locked, fs::perms::owner_all);
+            if (geteuid() != 0) CHECK(!enumerated && enumerationError == EACCES);
+            CHECK(d && error == 0 && d->start(30) == 0 && get(entry / "duration_ms") == "30\n");
+        });
         test("SIGTERM SIGKILL crash show legacy limit; restart initial off repairs", [&] {
             for (int sig : {SIGTERM, SIGKILL, SIGABRT}) {
                 const auto root = base / ("kill-" + std::to_string(sig)); const auto entry = led(root);
@@ -323,6 +372,6 @@ int main(int argc, char** argv) {
             }
         });
     } catch (const std::exception& e) { std::cerr << "FAIL after " << passed << ": " << e.what() << '\n'; return 1; }
-    std::cout << "TOTAL " << passed << "/22\n";
-    return passed == 22 ? 0 : 1;
+    std::cout << "TOTAL " << passed << "/24\n";
+    return passed == 24 ? 0 : 1;
 }
