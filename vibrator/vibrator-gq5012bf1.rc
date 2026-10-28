@@ -1,0 +1,7 @@
+# New source service, not a recovered stock init definition. Select only after
+# removing the old vibrator binary/rc/fragment and completing narrow sysfs policy.
+service vendor.vibrator-default /vendor/bin/hw/android.hardware.vibrator-service.gq5012bf1
+    class hal
+    user system
+    group system
+    interface aidl android.hardware.vibrator.IVibrator/default

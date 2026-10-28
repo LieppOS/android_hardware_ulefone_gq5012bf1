@@ -1,0 +1,9 @@
+<!-- Source candidate only: V2 is frozen in LineageOS 24.0, not a claim that
+     the unavailable stock fragment has been recovered or compatibility passed. -->
+<manifest version="1.0" type="device">
+    <hal format="aidl">
+        <name>android.hardware.vibrator</name>
+        <version>2</version>
+        <fqname>IVibrator/default</fqname>
+    </hal>
+</manifest>

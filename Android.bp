@@ -1,0 +1,29 @@
+// Copyright 2026 The LieppOS Contributors
+// SPDX-License-Identifier: Apache-2.0
+soong_namespace {
+    imports: ["hardware/mediatek/mt6878"],
+}
+
+package {
+    default_applicable_licenses: ["lieppos_gq5012bf1_vibrator_license"],
+}
+
+license {
+    name: "lieppos_gq5012bf1_vibrator_license",
+    visibility: [":__subpackages__"],
+    license_kinds: ["SPDX-license-identifier-Apache-2.0"],
+    license_text: ["LICENSE"],
+}
+
+cc_binary {
+    name: "android.hardware.vibrator-service.gq5012bf1",
+    vendor: true,
+    relative_install_path: "hw",
+    srcs: ["vibrator/main.cpp", "vibrator/Vibrator.cpp"],
+    static_libs: ["libmtk_regulator_vibrator"],
+    shared_libs: ["libbase", "libbinder_ndk", "android.hardware.vibrator-V2-ndk"],
+    init_rc: ["vibrator/vibrator-gq5012bf1.rc"],
+    vintf_fragments: ["vibrator/vibrator-gq5012bf1.xml"],
+    cpp_std: "c++17",
+    cflags: ["-Wall", "-Wextra", "-Werror"],
+}
